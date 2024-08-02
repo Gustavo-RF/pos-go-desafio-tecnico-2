@@ -1,139 +1,124 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
 )
 
-// func printchannel(c chan int, wg *sync.WaitGroup) {
-// 	for i := range c {
-// 		fmt.Printf("print %d\n", i)
-// 		fmt.Println(i)
-// 	}
+type Results struct {
+	Status int `json:"status"`
+	Qty    int `json:"qty"`
+}
 
-// 	wg.Done() //notify that we're done here
-// }
-
-// func main() {
-// 	c := make(chan int)
-// 	wg := sync.WaitGroup{}
-
-// 	wg.Add(1) //increase by one to wait for one goroutine to finish
-// 	//very important to do it here and not in the goroutine
-// 	//otherwise you get race condition
-
-// 	go printchannel(c, &wg) //very important to pass wg by reference
-// 	//sync.WaitGroup is a structure, passing it
-// 	//by value would produce incorrect results
-
-// 	for i := 0; i < 10; i++ {
-// 		fmt.Printf("loop %d\n", i)
-// 		c <- i
-// 	}
-
-// 	close(c)  //close the channel to terminate the range loop
-// 	wg.Wait() //wait for the goroutine to finish
-// }
-
-// package main
-
-// import (
-// 	"fmt"
-// 	"time"
-// )
-
-func someTask(id int, data chan int, wg *sync.WaitGroup) {
+func someTask(id int, url string, data chan int, wg *sync.WaitGroup, m *sync.Mutex, results *[]Results) {
 	for taskId := range data {
-		// time.Sleep(2 * time.Second)
 		fmt.Printf("%s - Worker: %d executed Task %d\n", time.Now(), id, taskId)
+
+		req, err := http.NewRequest("GET", url, nil)
+
+		if err != nil {
+			panic(errors.New("error while format address"))
+		}
+
+		req.Header.Set("Accepts", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			panic(err)
+		}
+
+		defer resp.Body.Close()
+
+		fmt.Printf("Status: %d\n", resp.StatusCode)
+
+		// precisa tratar condicao de corrida
+		m.Lock()
+		IncrementQuantity(resp.StatusCode, results)
+		m.Unlock()
 	}
 	wg.Done()
 }
 
+func (r *Results) inc() {
+	r.Qty++
+}
+
+func IncrementQuantity(statusCode int, results *[]Results) {
+	fmt.Println("increment", results, statusCode)
+	found := false
+	for _, result := range *results {
+		if result.Status == statusCode {
+			fmt.Println("Achou")
+			result.inc()
+			found = true
+			return
+		}
+	}
+
+	if !found {
+		*results = append(*results, Results{
+			Status: statusCode,
+			Qty:    1,
+		})
+	}
+}
+
+// // docker build -t desafio-tecnico-2 .
+// // docker run --name desafio-tecnico-2 desafio-tecnico-2 --foo=123 --blau=334
 func main() {
-	// Creating a channel
 	channel := make(chan int)
 	wg := sync.WaitGroup{}
+	m := sync.Mutex{}
 
-	// Define a flag chamada 'foo' com um valor padrão 'default'
-	foo := flag.String("foo", "default", "a foo flag")
-	blau := flag.String("blau", "default blau", "a blau flag")
-	flag.Parse() // Parseia os argumentos de linha de comando
+	results := []Results{}
 
-	fmt.Println("FOO:", *foo)
-	fmt.Println("BLAU:", *blau)
+	url := flag.String("url", "", "Url to test")
+	concurrency := flag.String("concurrency", "", "Total of concurrent calls")
+	requests := flag.String("requests", "", "Total of requests")
+	flag.Parse()
 
-	fooInt, err := strconv.Atoi(*foo)
+	if *url == "" {
+		panic(errors.New("url is required"))
+	}
+
+	if *concurrency == "" {
+		panic(errors.New("concurrency is required"))
+	}
+
+	if *requests == "" {
+		panic(errors.New("requests is required"))
+	}
+
+	concurrencyInt, err := strconv.Atoi(*concurrency)
 	if err != nil {
-		// ... handle error
 		panic(err)
 	}
 
-	blauInt, err := strconv.Atoi(*blau)
+	requestsInt, err := strconv.Atoi(*requests)
 	if err != nil {
-		// ... handle error
 		panic(err)
 	}
 
-	// Creating 10.000 workers to execute the task
-	for i := 0; i < fooInt; i++ {
+	for i := 0; i < concurrencyInt; i++ {
 		fmt.Printf("%s - Create %d\n", time.Now(), i)
 		wg.Add(1)
-		go someTask(i, channel, &wg)
+		go someTask(i, *url, channel, &wg, &m, &results)
 	}
 
-	// Filling channel with 100.000 numbers to be executed
-	for i := 0; i < blauInt; i++ {
+	for i := 0; i < requestsInt; i++ {
 		fmt.Printf("%s - Fill %d\n", time.Now(), i)
 		channel <- i
 	}
 
-	fmt.Println("Final 1")
-
 	close(channel)
 	wg.Wait()
-	fmt.Println("Final 2")
+
+	for i, result := range results {
+		fmt.Printf("%d - Status: %d - Total results: %d\n", i, result.Status, result.Qty)
+	}
 }
-
-// package main
-
-// import (
-// 	"flag"
-// 	"fmt"
-// )
-
-// // docker build -t desafio-tecnico-2 .
-// // docker run --name desafio-tecnico-2 desafio-tecnico-2 --foo=123 --blau=334
-// func main() {
-// 	// Define a flag chamada 'foo' com um valor padrão 'default'
-// 	foo := flag.String("foo", "default", "a foo flag")
-// 	blau := flag.String("blau", "default blau", "a blau flag")
-// 	flag.Parse() // Parseia os argumentos de linha de comando
-
-// 	fmt.Println("FOO:", *foo)
-// 	fmt.Println("BLAU:", *blau)
-
-// 	ch := make(chan int)
-// 	go publish(ch)
-// 	reader(ch)
-// 	// for x := range ch {
-// 	// 	fmt.Printf("Received %d\n", x)
-// 	// }
-// }
-
-// func reader(ch chan int) {
-// 	for x := range ch {
-// 		fmt.Printf("Received %d\n", x)
-// 	}
-// }
-
-// func publish(ch chan int) {
-// 	for i := 0; i < 10; i++ {
-// 		fmt.Printf("p %d\n", i)
-// 		ch <- i
-// 	}
-// 	close(ch)
-// }
