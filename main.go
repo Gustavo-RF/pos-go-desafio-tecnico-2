@@ -16,53 +16,51 @@ type Results struct {
 	Qty    int `json:"qty"`
 }
 
-func callUrl(url string, data chan int, wg *sync.WaitGroup, m *sync.Mutex, results *[]Results) {
-	defer wg.Done()
-	for _ = range data {
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			panic(errors.New("error while formatting address"))
-		}
-
-		req.Header.Set("Accepts", "application/json")
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			panic(err)
-		}
-		defer resp.Body.Close()
-
-		m.Lock()
-		IncrementQuantity(resp.StatusCode, results)
-		m.Unlock()
-	}
-}
-
 func (r *Results) inc() {
 	r.Qty++
 }
 
-func IncrementQuantity(statusCode int, results *[]Results) {
+func worker(data chan int, m *sync.Mutex, wg *sync.WaitGroup, results *[]Results) {
+	defer wg.Done()
+	for i := range data {
+		m.Lock()
+		IncrementQuantity(i, results)
+		m.Unlock()
+	}
+}
 
-	found := false
+func callUrl(url *string) int {
+	req, err := http.NewRequest("GET", *url, nil)
+	if err != nil {
+		panic(errors.New("error while formatting address"))
+	}
+
+	req.Header.Set("Accepts", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		panic(err)
+	}
+
+	defer resp.Body.Close()
+
+	return resp.StatusCode
+}
+
+func IncrementQuantity(statusCode int, results *[]Results) {
 	for i := range *results {
 		if (*results)[i].Status == statusCode {
 			(*results)[i].inc()
-			found = true
 			return
 		}
 	}
 
-	if !found {
-		*results = append(*results, Results{
-			Status: statusCode,
-			Qty:    1,
-		})
-	}
+	*results = append(*results, Results{
+		Status: statusCode,
+		Qty:    1,
+	})
 }
 
-// // docker build -t desafio-tecnico-2 .
-// // docker run --name desafio-tecnico-2 desafio-tecnico-2 --foo=123 --blau=334
 func main() {
 	start := time.Now()
 	channel := make(chan int)
@@ -100,11 +98,11 @@ func main() {
 
 	for i := 0; i < concurrencyInt; i++ {
 		wg.Add(1)
-		go callUrl(*url, channel, &wg, &m, &results)
+		go worker(channel, &m, &wg, &results)
 	}
 
 	for i := 0; i < requestsInt; i++ {
-		channel <- i
+		channel <- callUrl(url)
 	}
 
 	close(channel)
