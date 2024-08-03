@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
-	"time"
 )
 
 type Results struct {
@@ -15,14 +14,14 @@ type Results struct {
 	Qty    int `json:"qty"`
 }
 
-func someTask(id int, url string, data chan int, wg *sync.WaitGroup, m *sync.Mutex, results *[]Results) {
+func callUrl(id int, url string, data chan int, wg *sync.WaitGroup, m *sync.Mutex, results *[]Results) {
+	defer wg.Done()
 	for taskId := range data {
-		fmt.Printf("%s - Worker: %d executed Task %d\n", time.Now(), id, taskId)
+		fmt.Printf("Worker: %d executed Task %d\n", id, taskId)
 
 		req, err := http.NewRequest("GET", url, nil)
-
 		if err != nil {
-			panic(errors.New("error while format address"))
+			panic(errors.New("error while formatting address"))
 		}
 
 		req.Header.Set("Accepts", "application/json")
@@ -31,17 +30,12 @@ func someTask(id int, url string, data chan int, wg *sync.WaitGroup, m *sync.Mut
 		if err != nil {
 			panic(err)
 		}
-
 		defer resp.Body.Close()
 
-		fmt.Printf("Status: %d\n", resp.StatusCode)
-
-		// precisa tratar condicao de corrida
 		m.Lock()
 		IncrementQuantity(resp.StatusCode, results)
 		m.Unlock()
 	}
-	wg.Done()
 }
 
 func (r *Results) inc() {
@@ -49,12 +43,11 @@ func (r *Results) inc() {
 }
 
 func IncrementQuantity(statusCode int, results *[]Results) {
-	fmt.Println("increment", results, statusCode)
+
 	found := false
-	for _, result := range *results {
-		if result.Status == statusCode {
-			fmt.Println("Achou")
-			result.inc()
+	for i := range *results {
+		if (*results)[i].Status == statusCode {
+			(*results)[i].inc()
 			found = true
 			return
 		}
@@ -105,13 +98,11 @@ func main() {
 	}
 
 	for i := 0; i < concurrencyInt; i++ {
-		fmt.Printf("%s - Create %d\n", time.Now(), i)
 		wg.Add(1)
-		go someTask(i, *url, channel, &wg, &m, &results)
+		go callUrl(i, *url, channel, &wg, &m, &results)
 	}
 
 	for i := 0; i < requestsInt; i++ {
-		fmt.Printf("%s - Fill %d\n", time.Now(), i)
 		channel <- i
 	}
 
