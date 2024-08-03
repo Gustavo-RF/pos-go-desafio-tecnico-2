@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"sync"
+	"time"
 )
 
 type Results struct {
@@ -14,11 +16,9 @@ type Results struct {
 	Qty    int `json:"qty"`
 }
 
-func callUrl(id int, url string, data chan int, wg *sync.WaitGroup, m *sync.Mutex, results *[]Results) {
+func callUrl(url string, data chan int, wg *sync.WaitGroup, m *sync.Mutex, results *[]Results) {
 	defer wg.Done()
-	for taskId := range data {
-		fmt.Printf("Worker: %d executed Task %d\n", id, taskId)
-
+	for _ = range data {
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
 			panic(errors.New("error while formatting address"))
@@ -64,6 +64,7 @@ func IncrementQuantity(statusCode int, results *[]Results) {
 // // docker build -t desafio-tecnico-2 .
 // // docker run --name desafio-tecnico-2 desafio-tecnico-2 --foo=123 --blau=334
 func main() {
+	start := time.Now()
 	channel := make(chan int)
 	wg := sync.WaitGroup{}
 	m := sync.Mutex{}
@@ -99,7 +100,7 @@ func main() {
 
 	for i := 0; i < concurrencyInt; i++ {
 		wg.Add(1)
-		go callUrl(i, *url, channel, &wg, &m, &results)
+		go callUrl(*url, channel, &wg, &m, &results)
 	}
 
 	for i := 0; i < requestsInt; i++ {
@@ -109,7 +110,16 @@ func main() {
 	close(channel)
 	wg.Wait()
 
-	for i, result := range results {
-		fmt.Printf("%d - Status: %d - Total results: %d\n", i, result.Status, result.Qty)
+	end := time.Now()
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Status < results[j].Status
+	})
+
+	fmt.Printf("Stress test finalizado em %s\n", end.Sub(start))
+	fmt.Printf("Total de requests realizadas:\t\t%d\n", requestsInt)
+
+	for _, result := range results {
+		fmt.Printf("Status %d\t\t\tQtd:\t%d\n", result.Status, result.Qty)
 	}
 }
